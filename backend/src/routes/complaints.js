@@ -4,6 +4,38 @@ const { run, get, all, initDatabase } = require('../database/db');
 const dayjs = require('dayjs');
 const ruleEngine = require('../rules/ruleEngine');
 
+async function writeAuditLog(complaintId, operatorId, operatorName, actionType, oldStatus, newStatus, remark, detail) {
+  try {
+    await run(`
+      INSERT INTO audit_logs (
+        id, complaint_id, operator_id, operator_name, action_type,
+        old_status, new_status, remark, detail_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      uuidv4(), complaintId, operatorId, operatorName, actionType,
+      oldStatus, newStatus, remark, detail ? JSON.stringify(detail) : null
+    ]);
+  } catch (e) {
+    console.error('写入审计日志失败:', e);
+  }
+}
+
+async function writeStatusChange(complaintId, oldStatus, newStatus, operatorId, operatorName, changeReason, isAuto = false) {
+  try {
+    await run(`
+      INSERT INTO status_change_records (
+        id, complaint_id, old_status, new_status, operator_id,
+        operator_name, change_reason, is_auto_trigger
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      uuidv4(), complaintId, oldStatus, newStatus, operatorId,
+      operatorName, changeReason, isAuto ? 1 : 0
+    ]);
+  } catch (e) {
+    console.error('写入状态变更记录失败:', e);
+  }
+}
+
 const router = express.Router();
 
 (async () => {
@@ -118,7 +150,12 @@ router.post('/driver/:complaintId/evidence', async (req, res) => {
     }
 
     const newStatus = ruleEngine.getNextStatus(complaint.status, 'driver_submit');
+    const oldStatus = complaint.status;
+    
     await run('UPDATE complaints SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newStatus, complaintId]);
+    
+    await writeStatusChange(complaintId, oldStatus, newStatus, driverId, '', '司机提交举证');
+    await writeAuditLog(complaintId, driverId, '', 'DRIVER_SUBMIT_EVIDENCE', oldStatus, newStatus, '司机提交举证材料', { explanation });
 
     res.json({ success: true, data: { status: newStatus } });
   } catch (error) {
@@ -222,8 +259,19 @@ router.post('/audit/:complaintId/submit', async (req, res) => {
     ]);
 
     const newStatus = ruleEngine.getNextStatus(complaint.status, 'audit_complete');
+    const oldStatus = complaint.status;
+    
     await run('UPDATE complaints SET status = ?, judged_by = ?, judge_time = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [newStatus, auditorId, complaintId]);
+    
+    await writeStatusChange(complaintId, oldStatus, newStatus, auditorId, auditorName, '稽核完成');
+    await writeAuditLog(complaintId, auditorId, auditorName, 'AUDIT_COMPLETE', oldStatus, newStatus, '稽核员提交判责意见', {
+      opinion,
+      detourDetected,
+      suggestedPenalty,
+      suggestedCompensation,
+      ruleCheck
+    });
 
     res.json({ success: true, data: { status: newStatus } });
   } catch (error) {
@@ -257,9 +305,17 @@ router.post('/conclusion/:complaintId/publish', async (req, res) => {
     ]);
 
     if (!isReview) {
+      const oldStatus = complaint.status;
       const newStatus = ruleEngine.getNextStatus(complaint.status, 'publish');
       await run('UPDATE complaints SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
         [newStatus, complaintId]);
+      
+      await writeStatusChange(complaintId, oldStatus, newStatus, publisherId, publisherName, '发布结论');
+      await writeAuditLog(complaintId, publisherId, publisherName, 'CONCLUSION_PUBLISH', oldStatus, newStatus, 
+        `发布第${nextVersion}版结论`, { version: nextVersion, conclusion, penaltyResult, compensationAmount });
+    } else {
+      await writeAuditLog(complaintId, publisherId, publisherName, 'CONCLUSION_REVIEW', complaint.status, complaint.status,
+        `发布复议结论第${nextVersion}版`, { version: nextVersion, conclusion, parentId });
     }
 
     res.json({ success: true, data: { id: conclusionId, version: nextVersion } });
@@ -306,10 +362,20 @@ router.post('/system/check-timeouts', async (req, res) => {
 
     for (const complaint of pendingComplaints) {
       if (ruleEngine.checkEvidenceTimeout(complaint)) {
+        const oldStatus = complaint.status;
         const newStatus = ruleEngine.getNextStatus(complaint.status, 'timeout');
         await run('UPDATE complaints SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
           [newStatus, complaint.id]);
-        updated.push({ id: complaint.id, oldStatus: complaint.status, newStatus });
+        
+        await writeStatusChange(complaint.id, oldStatus, newStatus, 'system', '系统', '司机超时未举证', true);
+        await writeAuditLog(complaint.id, 'system', '系统', 'DRIVER_TIMEOUT_AUTO_AUDIT', oldStatus, newStatus,
+          '司机超时未举证，自动转稽核', {
+            evidenceDeadline: complaint.evidence_deadline,
+            autoTriggered: true,
+            reason: '司机超时未举证自动转稽核'
+          });
+        
+        updated.push({ id: complaint.id, oldStatus: complaint.status, newStatus, reason: '司机超时未举证自动转稽核' });
       }
     }
 
@@ -317,6 +383,119 @@ router.post('/system/check-timeouts', async (req, res) => {
   } catch (error) {
     console.error('超时检查失败:', error);
     res.status(500).json({ success: false, message: '检查失败' });
+  }
+});
+
+router.get('/:complaintId/versions/compare', async (req, res) => {
+  try {
+    const { complaintId } = req.params;
+    const { sourceA = 'passenger', sourceB = 'driver' } = req.query;
+
+    const complaint = await get('SELECT * FROM complaints WHERE id = ?', [complaintId]);
+    if (!complaint) {
+      return res.status(404).json({ success: false, message: '投诉单不存在' });
+    }
+
+    const trackA = await all('SELECT * FROM track_points WHERE complaint_id = ? AND source = ? ORDER BY timestamp', [complaintId, sourceA]);
+    const trackB = await all('SELECT * FROM track_points WHERE complaint_id = ? AND source = ? ORDER BY timestamp', [complaintId, sourceB]);
+
+    const compareResult = ruleEngine.compareTrackVersions(trackA, trackB, sourceA, sourceB);
+
+    res.json({
+      success: true,
+      data: {
+        complaint,
+        trackA: { source: sourceA, points: trackA, mileage: compareResult.mileageA },
+        trackB: { source: sourceB, points: trackB, mileage: compareResult.mileageB },
+        comparison: {
+          mileageDiff: compareResult.mileageDiff,
+          mileageDiffPercent: compareResult.mileageDiffPercent,
+          commonPoints: compareResult.commonPoints,
+          diffPoints: compareResult.diffPoints,
+          detourSegments: compareResult.detourSegments,
+          compareResult: compareResult.compareResult
+        }
+      }
+    });
+  } catch (error) {
+    console.error('版本对比失败:', error);
+    res.status(500).json({ success: false, message: '对比失败' });
+  }
+});
+
+router.post('/:complaintId/versions/compare/save', async (req, res) => {
+  try {
+    const { complaintId } = req.params;
+    const { 
+      sourceA = 'passenger', 
+      sourceB = 'driver',
+      operatorId,
+      operatorName
+    } = req.body;
+
+    const complaint = await get('SELECT * FROM complaints WHERE id = ?', [complaintId]);
+    if (!complaint) {
+      return res.status(404).json({ success: false, message: '投诉单不存在' });
+    }
+
+    const trackA = await all('SELECT * FROM track_points WHERE complaint_id = ? AND source = ? ORDER BY timestamp', [complaintId, sourceA]);
+    const trackB = await all('SELECT * FROM track_points WHERE complaint_id = ? AND source = ? ORDER BY timestamp', [complaintId, sourceB]);
+
+    const compareResult = ruleEngine.compareTrackVersions(trackA, trackB, sourceA, sourceB);
+
+    const compareId = uuidv4();
+    await run(`
+      INSERT INTO track_version_compares (
+        id, complaint_id, compare_type, version_a, version_b,
+        source_a, source_b, mileage_a, mileage_b, mileage_diff,
+        mileage_diff_percent, common_points, diff_points, detour_segments,
+        compare_result, operator_id, operator_name
+      ) VALUES (?, ?, 'track_source', 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      compareId, complaintId,
+      sourceA, sourceB,
+      compareResult.mileageA, compareResult.mileageB, compareResult.mileageDiff,
+      compareResult.mileageDiffPercent, compareResult.commonPoints, compareResult.diffPoints,
+      JSON.stringify(compareResult.detourSegments), compareResult.compareResult,
+      operatorId || 'system', operatorName || '系统'
+    ]);
+
+    await writeAuditLog(complaintId, operatorId || 'system', operatorName || '系统', 
+      'TRACK_VERSION_COMPARE', complaint.status, complaint.status,
+      `执行${sourceA}与${sourceB}轨迹版本对比`, {
+        compareId,
+        compareResult: compareResult.compareResult,
+        mileageDiff: compareResult.mileageDiff
+      });
+
+    res.json({
+      success: true,
+      data: { id: compareId, ...compareResult }
+    });
+  } catch (error) {
+    console.error('保存版本对比失败:', error);
+    res.status(500).json({ success: false, message: '保存失败' });
+  }
+});
+
+router.get('/:complaintId/audit-logs', async (req, res) => {
+  try {
+    const { complaintId } = req.params;
+    const auditLogs = await all('SELECT * FROM audit_logs WHERE complaint_id = ? ORDER BY created_at DESC', [complaintId]);
+    const statusChanges = await all('SELECT * FROM status_change_records WHERE complaint_id = ? ORDER BY created_at DESC', [complaintId]);
+    const compareRecords = await all('SELECT * FROM track_version_compares WHERE complaint_id = ? ORDER BY created_at DESC', [complaintId]);
+
+    res.json({
+      success: true,
+      data: {
+        auditLogs,
+        statusChanges,
+        compareRecords
+      }
+    });
+  } catch (error) {
+    console.error('查询审计日志失败:', error);
+    res.status(500).json({ success: false, message: '查询失败' });
   }
 });
 

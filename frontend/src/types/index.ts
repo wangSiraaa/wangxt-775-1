@@ -116,6 +116,86 @@ export interface RuleCheckResult {
   mileageDiffPercent: number;
 }
 
+export interface AuditLog {
+  id: string;
+  complaint_id: string;
+  operator_id: string;
+  operator_name: string;
+  action_type: string;
+  old_status?: string;
+  new_status?: string;
+  remark?: string;
+  detail_json?: string;
+  created_at: string;
+}
+
+export interface StatusChangeRecord {
+  id: string;
+  complaint_id: string;
+  old_status: string;
+  new_status: string;
+  operator_id?: string;
+  operator_name?: string;
+  change_reason?: string;
+  is_auto_trigger: boolean;
+  created_at: string;
+}
+
+export interface TrackVersionCompare {
+  id: string;
+  complaint_id: string;
+  compare_type: string;
+  version_a: number;
+  version_b: number;
+  source_a: string;
+  source_b: string;
+  mileage_a?: number;
+  mileage_b?: number;
+  mileage_diff?: number;
+  mileage_diff_percent?: number;
+  common_points: number;
+  diff_points: number;
+  detour_segments?: string;
+  compare_result: string;
+  operator_id?: string;
+  operator_name?: string;
+  created_at: string;
+}
+
+export interface DetourSegment {
+  type: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high';
+}
+
+export interface TrackCompareResult {
+  complaint: Complaint;
+  trackA: {
+    source: string;
+    points: TrackPoint[];
+    mileage: number;
+  };
+  trackB: {
+    source: string;
+    points: TrackPoint[];
+    mileage: number;
+  };
+  comparison: {
+    mileageDiff: number;
+    mileageDiffPercent: number;
+    commonPoints: number;
+    diffPoints: number;
+    detourSegments: DetourSegment[];
+    compareResult: 'normal' | 'warning' | 'abnormal';
+  };
+}
+
+export interface AuditLogsResponse {
+  auditLogs: AuditLog[];
+  statusChanges: StatusChangeRecord[];
+  compareRecords: TrackVersionCompare[];
+}
+
 export interface ComplaintDetail {
   complaint: Complaint;
   trackPoints: TrackPoint[];

@@ -7,6 +7,7 @@ import {
   AuditOutlined,
   MessageOutlined,
   HomeOutlined,
+  DiffOutlined,
 } from '@ant-design/icons';
 import PassengerSubmit from './pages/PassengerSubmit';
 import DriverEvidence from './pages/DriverEvidence';
@@ -14,6 +15,7 @@ import AuditJudgement from './pages/AuditJudgement';
 import ConclusionPublish from './pages/ConclusionPublish';
 import Home from './pages/Home';
 import ComplaintDetailPage from './pages/ComplaintDetail';
+import VersionComparePage from './pages/VersionCompare';
 
 const { Header, Content } = Layout;
 const { Title } = Typography;
@@ -47,6 +49,11 @@ const App: React.FC = () => {
       icon: <MessageOutlined />,
       label: <Link to="/conclusion">客服端-结论发布</Link>,
     },
+    {
+      key: '/version-compare',
+      icon: <DiffOutlined />,
+      label: <Link to="/version-compare">版本对比</Link>,
+    },
   ];
 
   const selectedKey = location.pathname.includes('/detail') 
@@ -78,6 +85,8 @@ const App: React.FC = () => {
             <Route path="/audit" element={<AuditJudgement />} />
             <Route path="/conclusion" element={<ConclusionPublish />} />
             <Route path="/detail/:id" element={<ComplaintDetailPage />} />
+            <Route path="/version-compare" element={<VersionComparePage />} />
+            <Route path="/version-compare/:id" element={<VersionComparePage />} />
           </Routes>
         </Content>
       </Layout>

@@ -146,6 +146,61 @@ function initDatabase() {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
         )
+      `);
+
+      db.run(`
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id TEXT PRIMARY KEY,
+          complaint_id TEXT NOT NULL,
+          operator_id TEXT NOT NULL,
+          operator_name TEXT NOT NULL,
+          action_type TEXT NOT NULL,
+          old_status TEXT,
+          new_status TEXT,
+          remark TEXT,
+          detail_json TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
+        )
+      `);
+
+      db.run(`
+        CREATE TABLE IF NOT EXISTS track_version_compares (
+          id TEXT PRIMARY KEY,
+          complaint_id TEXT NOT NULL,
+          compare_type TEXT NOT NULL,
+          version_a INTEGER NOT NULL,
+          version_b INTEGER NOT NULL,
+          source_a TEXT NOT NULL,
+          source_b TEXT NOT NULL,
+          mileage_a REAL,
+          mileage_b REAL,
+          mileage_diff REAL,
+          mileage_diff_percent REAL,
+          common_points INTEGER,
+          diff_points INTEGER,
+          detour_segments TEXT,
+          compare_result TEXT,
+          operator_id TEXT,
+          operator_name TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
+        )
+      `);
+
+      db.run(`
+        CREATE TABLE IF NOT EXISTS status_change_records (
+          id TEXT PRIMARY KEY,
+          complaint_id TEXT NOT NULL,
+          old_status TEXT NOT NULL,
+          new_status TEXT NOT NULL,
+          operator_id TEXT,
+          operator_name TEXT,
+          change_reason TEXT,
+          is_auto_trigger BOOLEAN DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
+        )
       `, (err) => {
         if (err) {
           reject(err);

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Complaint, ComplaintDetail } from '../types';
+import { Complaint, ComplaintDetail, TrackCompareResult, AuditLogsResponse } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -36,6 +36,15 @@ export const complaintApi = {
 
   getComplaint: (complaintId: string): Promise<{ success: boolean; data: Complaint }> =>
     api.get(`/complaints/${complaintId}`).then(r => r.data),
+
+  compareTrackVersions: (complaintId: string, sourceA?: string, sourceB?: string): Promise<{ success: boolean; data: TrackCompareResult }> =>
+    api.get(`/complaints/${complaintId}/versions/compare`, { params: { sourceA, sourceB } }).then(r => r.data),
+
+  saveTrackCompare: (complaintId: string, data: any): Promise<{ success: boolean; data: any }> =>
+    api.post(`/complaints/${complaintId}/versions/compare/save`, data).then(r => r.data),
+
+  getAuditLogs: (complaintId: string): Promise<{ success: boolean; data: AuditLogsResponse }> =>
+    api.get(`/complaints/${complaintId}/audit-logs`).then(r => r.data),
 };
 
 export default api;

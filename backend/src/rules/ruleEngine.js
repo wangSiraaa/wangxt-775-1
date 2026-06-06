@@ -114,6 +114,97 @@ function getNextStatus(currentStatus, action) {
   return statusFlow[currentStatus]?.[action] || currentStatus;
 }
 
+function compareTrackVersions(trackPointsA, trackPointsB, sourceA, sourceB) {
+  const sortedA = [...trackPointsA].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const sortedB = [...trackPointsB].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+  const mileageA = calculateTrackMileage(sortedA);
+  const mileageB = calculateTrackMileage(sortedB);
+
+  const mileageDiff = Math.abs(mileageA - mileageB);
+  const mileageDiffPercent = mileageA > 0 ? mileageDiff / mileageA : 0;
+
+  const timeThreshold = 5 * 60 * 1000;
+  const distanceThreshold = 0.05;
+
+  let commonPoints = 0;
+  let diffPoints = 0;
+  const detourSegments = [];
+
+  for (const pointA of sortedA) {
+    let foundMatch = false;
+    for (const pointB of sortedB) {
+      const timeDiff = Math.abs(new Date(pointA.timestamp) - new Date(pointB.timestamp));
+      if (timeDiff <= timeThreshold) {
+        const dist = calculateDistance(
+          pointA.latitude, pointA.longitude,
+          pointB.latitude, pointB.longitude
+        );
+        if (dist <= distanceThreshold) {
+          foundMatch = true;
+          break;
+        }
+      }
+    }
+    if (foundMatch) {
+      commonPoints++;
+    } else {
+      diffPoints++;
+    }
+  }
+
+  if (mileageDiffPercent > 0.1) {
+    detourSegments.push({
+      type: 'mileage_diff',
+      description: `${sourceA}轨迹里程 ${mileageA.toFixed(2)}km 与 ${sourceB}轨迹里程 ${mileageB.toFixed(2)}km 差异 ${(mileageDiffPercent * 100).toFixed(1)}%`,
+      severity: mileageDiffPercent > 0.2 ? 'high' : 'medium'
+    });
+  }
+
+  const diffRatio = sortedA.length > 0 ? diffPoints / sortedA.length : 0;
+  if (diffRatio > 0.3) {
+    detourSegments.push({
+      type: 'track_mismatch',
+      description: `轨迹匹配度较低，${diffPoints}/${sortedA.length} 个点无法匹配`,
+      severity: diffRatio > 0.5 ? 'high' : 'medium'
+    });
+  }
+
+  let compareResult = 'normal';
+  if (detourSegments.some(s => s.severity === 'high')) {
+    compareResult = 'abnormal';
+  } else if (detourSegments.some(s => s.severity === 'medium')) {
+    compareResult = 'warning';
+  }
+
+  return {
+    mileageA,
+    mileageB,
+    mileageDiff,
+    mileageDiffPercent,
+    commonPoints,
+    diffPoints,
+    detourSegments,
+    compareResult,
+    sourceA,
+    sourceB
+  };
+}
+
+function generateAuditLog(complaintId, operatorId, operatorName, actionType, oldStatus, newStatus, remark, detail) {
+  return {
+    id: null,
+    complaintId,
+    operatorId,
+    operatorName,
+    actionType,
+    oldStatus,
+    newStatus,
+    remark,
+    detailJson: detail ? JSON.stringify(detail) : null
+  };
+}
+
 module.exports = {
   RULES,
   calculateDistance,
@@ -123,4 +214,6 @@ module.exports = {
   checkComplaintReadOnly,
   canAddReview,
   getNextStatus,
+  compareTrackVersions,
+  generateAuditLog,
 };
