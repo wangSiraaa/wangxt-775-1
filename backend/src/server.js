@@ -5,7 +5,7 @@ const path = require('path');
 const complaintRoutes = require('./routes/complaints');
 
 const app = express();
-const PORT = process.env.PORT || 3005;
+const PORT = process.env.PORT || 3001;
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
@@ -16,7 +16,7 @@ app.use('/api/complaints', complaintRoutes);
 
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-const frontendDist = path.join(__dirname, '../../frontend/dist');
+const frontendDist = path.join(__dirname, '../public');
 app.use(express.static(frontendDist));
 
 app.get('/', (req, res) => {

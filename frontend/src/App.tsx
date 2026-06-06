@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Layout, Menu, Typography } from 'antd';
 import {
   UserOutlined,
